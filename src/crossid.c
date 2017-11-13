@@ -62,16 +62,14 @@ void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
         double tolerance)
 {
     fieldstruct	**field, *field1, *field2;
-    wcsstruct	*wcs;
     setstruct	**pset1,**pset2, **pset,
     *set1,*set2, *set;
-    samplestruct	*samp1,*nexsamp1, *samp2,*samp2b,*samp2min,
+    samplestruct	*samp1, *samp2,*samp2b,*samp2min,
     *prevsamp2,*nextsamp1,*nextsamp2;
     double	projmin2[NAXIS], projmax2[NAXIS],
     *proj1,
     lng1,lat1, latmin1,latmax1, lngmin2,lngmax2,latmin2,latmax2,
     dlng,dlat, dx, rlim,rlimmin,r2,r2n,r2p,r2min;
-    float	fmax;
     int		i, f,f1,f2, s1,s2, nset1,nset2, nsamp, nsamp2,nsamp2b,
     s, nfield, naxis, lng,lat, yaxis;
 
@@ -83,7 +81,6 @@ void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
     naxis = fgroup->naxis;
     lng = fgroup->lng;
     lat = fgroup->lat;
-    wcs = fgroup->wcs;
 
     /* Compute the largest possible error in pixels allowed in previous matching */
     rlimmin = 0.0;
@@ -307,7 +304,6 @@ void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
                     latmin1 = lat1-rlim;
                     latmax1 = lat1+rlim;
                     r2min = rlim*rlim;
-                    fmax = 0.0;
                     samp2min = NULL;
                     samp2 = samp2b;
                     /*-------- Jump over sources that can't match in y */
