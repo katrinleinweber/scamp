@@ -7,7 +7,7 @@
  *
  *	This file part of:	SCAMP
  *
- *	Copyright:		(C) 2002-2012 Emmanuel Bertin -- IAP/CNRS/UPMC
+ *	Copyright:		(C) 2002-2017 Emmanuel Bertin -- IAP/CNRS/UPMC
  *
  *	License:		GNU General Public License
  *
@@ -22,7 +22,7 @@
  *	You should have received a copy of the GNU General Public License
  *	along with SCAMP. If not, see <http://www.gnu.org/licenses/>.
  *
- *	Last modified:		13/09/2012
+ *	Last modified:		 15/11/2017
  *
  *%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 
@@ -105,6 +105,7 @@ static void sort_unlink_samples(fgroupstruct *fgroup)
  * @param lng longitude
  * @param lat latitude
  * @returns boolean true or false.
+ * @date 15/11/2017
  */
 static bool overlapping_sets(setstruct *set_A, setstruct *set_B,
         double rlim, int lng, int lat)
@@ -134,6 +135,7 @@ static bool overlapping_sets(setstruct *set_A, setstruct *set_B,
  * @param lng longitude
  * @param lat latitude
  * @returns boolean true or false.
+ * @date 15/11/2017
  */
 static bool sample_overlaps_set(
         samplestruct *sample,
@@ -163,7 +165,7 @@ static bool sample_overlaps_set(
  * @param reffield Pointer to the reference field,
  * @param tolerance Tolerance (in degree. if angular coordinates).
  * @author E. Bertin (IAP)
- * @date 13/09/2012
+ * @date 15/11/2017
  */
 void crossid_fgroup(
         fgroupstruct *fgroup,
