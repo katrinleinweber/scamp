@@ -197,6 +197,11 @@ void crossid_fgroup(
 
     /* Now start the cross-id loop */
     /* for each fields */
+#pragma omp parallel for shared(fgroup, naxis, lng, lat, rlim), private(\
+        field_A, field_B, set_A, set_B, sample_A, sample_B, B_match, \
+        previous_sample, next_sample, sample_A_latmin, sample_A_latmax, \
+        samples_A_B_dist, samples_A_B_mindist, lng_diff, lat_diff, dx, \
+        r2n, r2p, yaxis, i, j, k, l, m, n, o)
     for (i=1; i<fgroup->nfield; i++) {
         field_A = fgroup->field[i];
 
@@ -272,51 +277,54 @@ void crossid_fgroup(
 
 
                         /* Link samples if there is a match */
+
                         if (B_match) {
+#pragma omp critical
+                            { // openmp critical block
 
-                            // TODO this part can not go parallel. Use an OpenMP lock here.
-                            r2p = r2n = BIG;
-                            if ((previous_sample=sample_A->prevsamp)) {
+                                r2p = r2n = BIG;
+                                if ((previous_sample=sample_A->prevsamp)) {
+                                    /* Check if it is a better match than the previous one */
+
+                                    if (lat!=lng) {
+                                        lng_diff = previous_sample->projpos[lng] - sample_A->projpos[lng];
+                                        lat_diff = previous_sample->projpos[lat] - sample_A->projpos[lat];
+                                        r2p = lng_diff*lng_diff + lat_diff*lat_diff;
+                                    } else {
+                                        r2p = 0.0;
+                                        for (i=0; i<naxis; i++) {
+                                            dx = previous_sample->projpos[i] - sample_A->projpos[i];
+                                            r2p += dx*dx;
+                                        }
+                                    }
+                                }
+
                                 /* Check if it is a better match than the previous one */
+                                if ((next_sample=B_match->nextsamp)) {
 
-                                if (lat!=lng) {
-                                    lng_diff = previous_sample->projpos[lng] - sample_A->projpos[lng];
-                                    lat_diff = previous_sample->projpos[lat] - sample_A->projpos[lat];
-                                    r2p = lng_diff*lng_diff + lat_diff*lat_diff;
-                                } else {
-                                    r2p = 0.0;
-                                    for (i=0; i<naxis; i++) {
-                                        dx = previous_sample->projpos[i] - sample_A->projpos[i];
-                                        r2p += dx*dx;
+                                    if (lat!=lng) {
+                                        lng_diff = B_match->projpos[lng] - next_sample->projpos[lng];
+                                        lat_diff = B_match->projpos[lat] - next_sample->projpos[lat];
+                                        r2n = lng_diff*lng_diff + lat_diff*lat_diff;
+                                    } else {
+                                        r2n = 0.0;
+                                        for (i=0; i<naxis; i++)
+                                        {
+                                            dx = B_match->projpos[i] - next_sample->projpos[i];
+                                            r2n += dx*dx;
+                                        }
                                     }
                                 }
-                            }
 
-                            /* Check if it is a better match than the previous one */
-                            if ((next_sample=B_match->nextsamp)) {
-
-                                if (lat!=lng) {
-                                    lng_diff = B_match->projpos[lng] - next_sample->projpos[lng];
-                                    lat_diff = B_match->projpos[lat] - next_sample->projpos[lat];
-                                    r2n = lng_diff*lng_diff + lat_diff*lat_diff;
-                                } else {
-                                    r2n = 0.0;
-                                    for (i=0; i<naxis; i++)
-                                    {
-                                        dx = B_match->projpos[i] - next_sample->projpos[i];
-                                        r2n += dx*dx;
-                                    }
+                                /*------------ unlink from previous match if this is a better match */
+                                if (samples_A_B_mindist<r2p && samples_A_B_mindist<r2n) {
+                                    if (previous_sample)
+                                        previous_sample->nextsamp = NULL;
+                                    if (next_sample)
+                                        next_sample->prevsamp = NULL;
+                                    sample_A->prevsamp = B_match;
+                                    B_match->nextsamp = sample_A;
                                 }
-                            }
-
-                            /*------------ unlink from previous match if this is a better match */
-                            if (samples_A_B_mindist<r2p && samples_A_B_mindist<r2n) {
-                                if (previous_sample)
-                                    previous_sample->nextsamp = NULL;
-                                if (next_sample)
-                                    next_sample->prevsamp = NULL;
-                                sample_A->prevsamp = B_match;
-                                B_match->nextsamp = sample_A;
                             }
                         }
                     }
@@ -333,6 +341,11 @@ void crossid_fgroup(
         sort_samples(set_A);
         unlink_samples(set_A);
 
+#pragma omp parallel for shared(fgroup, naxis, lng, lat, rlim, set_A), private(\
+        field_A, field_B, set_B, sample_A, sample_B, B_match, \
+        previous_sample, next_sample, sample_A_latmin, sample_A_latmax, \
+        samples_A_B_dist, samples_A_B_mindist, lng_diff, lat_diff, dx, \
+        r2n, r2p, yaxis, i, j, k, l, m, n, o)
         for (k=0; k<fgroup->nfield; k++) {
             field_B = fgroup->field[k];
 
@@ -393,29 +406,31 @@ void crossid_fgroup(
                     }
 
 
-
                     if (B_match) {
-                        r2n = BIG;
-                        if ((next_sample=sample_A->nextsamp)) {
-                            /*------------ Check if it is a better match than the previous one */
-                            if (lat!=lng) {
-                                lng_diff = next_sample->projpos[lng] - sample_A->projpos[lng];
-                                lat_diff = next_sample->projpos[lat] - sample_A->projpos[lat];
-                                r2n = lng_diff*lng_diff + lat_diff*lat_diff;
-                            } else {
-                                r2n = 0.0;
-                                for (m=0; m<naxis; m++) {
-                                    dx = next_sample->projpos[m] - sample_A->projpos[m];
-                                    r2n += dx*dx;
+#pragma omp critical
+                        { // openmp critical block
+                            r2n = BIG;
+                            if ((next_sample=sample_A->nextsamp)) {
+                                /*------------ Check if it is a better match than the previous one */
+                                if (lat!=lng) {
+                                    lng_diff = next_sample->projpos[lng] - sample_A->projpos[lng];
+                                    lat_diff = next_sample->projpos[lat] - sample_A->projpos[lat];
+                                    r2n = lng_diff*lng_diff + lat_diff*lat_diff;
+                                } else {
+                                    r2n = 0.0;
+                                    for (m=0; m<naxis; m++) {
+                                        dx = next_sample->projpos[m] - sample_A->projpos[m];
+                                        r2n += dx*dx;
+                                    }
                                 }
                             }
-                        }
-                        /*---------- unlink from previous match if this is a better match */
-                        if (samples_A_B_mindist<r2n) {
-                            if (next_sample)
-                                next_sample->prevsamp = NULL;
-                            sample_A->nextsamp = B_match;
-                            B_match->prevsamp = sample_A;
+                            /*---------- unlink from previous match if this is a better match */
+                            if (samples_A_B_mindist<r2n) {
+                                if (next_sample)
+                                    next_sample->prevsamp = NULL;
+                                sample_A->nextsamp = B_match;
+                                B_match->prevsamp = sample_A;
+                            }
                         }
                     }
                 }
