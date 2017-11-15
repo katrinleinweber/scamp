@@ -26,13 +26,8 @@
  *
  *%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
 
-#ifdef HAVE_CONFIG_H
-#include	"config.h"
-#endif
-
-#include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "define.h"
 #include "globals.h"
@@ -46,6 +41,118 @@
 #include "prefs.h"
 #include "samples.h"
 
+#ifdef HAVE_CONFIG_H
+#include    "config.h"
+#endif
+
+/**
+ * @fn static double get_limit(fgroupstruct *fgroup, double tolerance)
+ * @brief Compute the largest possible error.
+ * Compute the largest possible error in pixels allowed in previous matching
+ * @return largest possible error
+ * @date 13/11/2017
+ */
+static double get_limit(fgroupstruct *fgroup, double tolerance)
+{
+    double lim_tmp;
+    double lim_result = 0.0;
+    int i;
+
+    for (i=0; i < fgroup->naxis; i++) {
+        lim_tmp = tolerance / fgroup->meanwcsscale[i];
+        if (lim_tmp > lim_result)
+            lim_result = lim_tmp;
+    }
+
+    return lim_result;
+}
+
+/*
+ * @fn static void sort_samples(fgroupstruct *fgroup)
+ * @brief Sort samples to accelerate further processing and reset pointers.
+ * @date 13/11/2017
+ */
+static void sort_unlink_samples(fgroupstruct *fgroup)
+{
+    fieldstruct **field = fgroup->field;
+    setstruct    *set;
+    int i, j;
+
+    for (i=0; i < fgroup->nfield; i++) {
+
+        field[i]->prevfield = NULL;
+        field[i]->nextfield = NULL;
+
+        for (j=0; j < field[i]->nset; j++) {
+
+            set = field[i]->set[j];
+
+            sort_samples(set);
+            unlink_samples(set);
+
+        }
+    }
+}
+
+
+/**
+ * @fn static bool overlapping_sets(setstruct *set_A, setstruct *set_B)
+ * @brief Check if frames are overlapping
+ * If frames are not overlapping, no need to corss them!
+ * @param set_A a pointer to the first setstruct
+ * @param set_B a pointer to the second setstruct
+ * @param rlim maximul distance
+ * @param lng longitude
+ * @param lat latitude
+ * @returns boolean true or false.
+ */
+static bool overlapping_sets(setstruct *set_A, setstruct *set_B,
+        double rlim, int lng, int lat)
+{
+
+    if (lat == lng)
+        return true;
+
+    if ((set_B->projposmax[lng] + rlim) < set_A->projposmin[lng]
+     || (set_B->projposmin[lng] - rlim) > set_A->projposmax[lng]
+     || (set_B->projposmax[lat] + rlim) < set_A->projposmin[lat]
+     || (set_B->projposmin[lat] - rlim) > set_A->projposmax[lat]) {
+        return false;
+    }
+
+    return true;
+}
+
+
+/**
+ * @fn static bool sample_overlap(samplestruct *sample, setstruct *set
+ * double rlim, int lng, int lat)
+ * @brief Check if sample can match any objets in set.
+ * @param set_A a pointer to the first setstruct
+ * @param set_B a pointer to the second setstruct
+ * @param rlim maximul distance
+ * @param lng longitude
+ * @param lat latitude
+ * @returns boolean true or false.
+ */
+static bool sample_overlaps_set(
+        samplestruct *sample,
+        setstruct    *set,
+        double        rlim,
+        int           lng,
+        int           lat)
+{
+    if (
+            sample->projpos[lat] < (set->projposmin[lat] - rlim) ||
+            sample->projpos[lat] > (set->projposmax[lat] + rlim) ||
+            sample->projpos[lng] < (set->projposmin[lng] - rlim) ||
+            sample->projpos[lng] > (set->projposmax[lng] + rlim))
+        return false;
+
+    return true;
+}
+
+
 /**
  * @fn void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
  *                          double tolerance)
@@ -58,189 +165,156 @@
  * @author E. Bertin (IAP)
  * @date 13/09/2012
  */
-void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
-        double tolerance)
-{
-    fieldstruct	**field, *field1, *field2;
-    setstruct	**pset1,**pset2, **pset,
-    *set1,*set2, *set;
-    samplestruct	*samp1, *samp2,*samp2b,*samp2min,
-    *prevsamp2,*nextsamp1,*nextsamp2;
-    double	projmin2[NAXIS], projmax2[NAXIS],
-    *proj1,
-    lng1,lat1, latmin1,latmax1, lngmin2,lngmax2,latmin2,latmax2,
-    dlng,dlat, dx, rlim,rlimmin,r2,r2n,r2p,r2min;
-    int		i, f,f1,f2, s1,s2, nset1,nset2, nsamp, nsamp2,nsamp2b,
-    s, nfield, naxis, lng,lat, yaxis;
+void crossid_fgroup(
+        fgroupstruct *fgroup,
+        fieldstruct  *reffield,
+        double        tolerance) {
 
-    field1 = NULL;	/* to avoid gcc -Wall warnings */
-    proj1 = NULL;		/* to avoid gcc -Wall warnings */
-    lng1 = lngmin2 = lngmax2 = latmin2 = latmax2 = 0.0;
-    field = fgroup->field;
-    nfield = fgroup->nfield;
+    fieldstruct	 *field_A, *field_B;
+    setstruct    *set_A, *set_B;
+    samplestruct *sample_A, *sample_B,
+                 *B_match,
+                 *previous_sample, *next_sample;
+
+    double sample_A_latmin, sample_A_latmax,
+           samples_A_B_dist, samples_A_B_mindist,
+           lng_diff, lat_diff, dx, rlim, r2n, r2p;
+
+    int naxis, yaxis, lng, lat;
+    int i, j, k, l, m, n, o;
+
     naxis = fgroup->naxis;
     lng = fgroup->lng;
     lat = fgroup->lat;
 
     /* Compute the largest possible error in pixels allowed in previous matching */
-    rlimmin = 0.0;
-    for (i=0; i<naxis; i++)
-        if ((rlim=tolerance/fgroup->meanwcsscale[i])>rlimmin)
-            rlimmin = rlim;
-    rlim = rlimmin;
+    rlim = get_limit(fgroup, tolerance);
 
     /* Sort samples to accelerate further processing and reset pointers */
-    for (f=0; f<nfield; f++)
-    {
-        pset = field[f]->set;
-        set = *(pset++);
-        field[f]->prevfield = field[f]->nextfield = NULL;
-        for (s=field[f]->nset; s--; set=*(pset++))
-        {
-            sort_samples(set);
-            unlink_samples(set);
-        }
-    }
+    sort_unlink_samples(fgroup);
 
-    /* Now start the real cross-id loop */
-    for (f1=1; f1<nfield; f1++)
-    {
-        field1 = field[f1];
-        pset1 = field1->set;
-        set1 = *(pset1++);
-        nset1 = field1->nset;
-        for (s1=nset1; s1--; set1=*(pset1++))
-        {
-            for (f2=0; f2<f1; f2++)
-            {
-                field2 = field[f2];
-                pset2 = field2->set;
-                set2 = *(pset2++);
-                nset2 = field2->nset;
-                for (s2=nset2; s2--; set2=*(pset2++))
-                {
-                    /*-------- Exclude non-overlapping frames */
-                    if (lng != lat)
-                    {
-                        if (set1->projposmin[lng] > (lngmax2=set2->projposmax[lng]+rlim)
-                         || (lngmin2=set2->projposmin[lng]-rlim) > set1->projposmax[lng]
-                         || set1->projposmin[lat] > (latmax2=set2->projposmax[lat]+rlim)
-                         || (latmin2=set2->projposmin[lat]-rlim)> set1->projposmax[lat])
+    /* Now start the cross-id loop */
+    /* for each fields */
+    for (i=1; i<fgroup->nfield; i++) {
+        field_A = fgroup->field[i];
+
+        /* for each other fields */
+        for (j=0; j<i; j++) {
+            field_B = fgroup->field[j];
+
+            /* for each sets from field_A */
+            for (k=0; k < field_A->nset; k++) {
+                set_A = field_A->set[k];
+
+                /* for each sets from field_B */
+                for (l=0; l < field_B->nset; l++) {
+                    set_B = field_B->set[l];
+
+                    if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
+                        continue;
+
+                    /* for each samples from set_A */
+                    for (m=0; m <set_A->nsample; m++) {
+                        sample_A = &set_A->sample[m];
+
+                        if (!sample_overlaps_set(sample_A, set_B, rlim, lng, lat))
                             continue;
-                    }
-                    else
-                        for (i=0; i<naxis; i++)
-                            if (set1->projposmin[i] > (projmax2[i]=set2->projposmax[i]+rlim)
-                             || (projmin2[i]=set2->projposmin[i]-rlim)> set1->projposmax[i])
-                                continue;
-                    samp1 = set1->sample;
-                    samp2b = set2->sample;
-                    nsamp2b = set2->nsample;
-                    for (nsamp=set1->nsample; nsamp--; samp1++)
-                    {
-                        if (lat!=lng)
-                        {
-                            lng1 = samp1->projpos[lng];
-                            lat1 = samp1->projpos[lat];
+
+                        /* XXX ??? */
+                        if (lat != lng)
                             yaxis = lat;
-                            /*------------ Jump over sources in the non-overlapping region */
-                            if (lat1<latmin2 || lat1>latmax2 || lng1<lngmin2 || lng1>lngmax2)
-                                continue;
-                        }
                         else
-                        {
-                            proj1 = samp1->projpos;
-                            for (i=0; i<naxis; i++)
-                                if (proj1[i] < projmin2[i] || proj1[i]>projmax2[i])
-                                    continue;
-                            lat1 = (naxis<2) ? proj1[yaxis=0] : proj1[yaxis=1];
-                        }
-                        latmin1 = lat1-rlim;
-                        latmax1 = lat1+rlim;
-                        r2min = rlim*rlim;
-                        samp2min = NULL;
-                        samp2 = samp2b;
-                        /*---------- Jump over sources that can't match in y */
-                        for (nsamp2=nsamp2b; nsamp2-- && samp2->projpos[yaxis]<latmin1;
-                                samp2++);
-                        samp2b = samp2;
-                        nsamp2b = ++nsamp2;
-                        for (; nsamp2-- && samp2->projpos[yaxis]<latmax1; samp2++)
-                        {
-                            if (samp2->nextsamp && samp2->nextsamp->set->field!=field1)
+                            yaxis = (naxis < 2) ? 0 : 1;
+
+                        sample_A_latmin = sample_A->projpos[lat] - rlim;
+                        sample_A_latmax = sample_A->projpos[lat] + rlim;
+                        samples_A_B_mindist = rlim * rlim;
+                        B_match = NULL;
+
+                        /* for each samples from set_B */
+                        for (n=0; n < set_B->nsample; n++) {
+                            sample_B = &set_B->sample[n];
+
+                            /* We did not reach interesting samples */
+                            if (sample_B->projpos[yaxis] < sample_A_latmin)
                                 continue;
-                            if (lat!=lng)
-                            {
-                                dlng = lng1 - samp2->projpos[lng];
-                                dlat = lat1 - samp2->projpos[lat];
-                                r2 = dlng*dlng + dlat*dlat;
-                            }
-                            else
-                            {
-                                r2 = 0.0;
-                                for (i=0; i<naxis; i++)
+
+                            /* We will not have any more matching samples */
+                            if (sample_B->projpos[yaxis] > sample_A_latmax)
+                                break;
+
+                            /* XXX ??? */
+                            if (sample_B->nextsamp && sample_B->nextsamp->set->field!=field_A)
+                                continue;
+
+                            /* Effectively compare objects */
+                            if (lat!=lng) {
+                                lng_diff = sample_A->projpos[lng] - sample_B->projpos[lng];
+                                lat_diff = sample_A->projpos[lat] - sample_B->projpos[lat];
+                                samples_A_B_dist = lng_diff*lng_diff + lat_diff*lat_diff;
+                            } else {
+                                samples_A_B_dist = 0.0;
+                                for (o=0; o<naxis; o++)
                                 {
-                                    dx = proj1[i] - samp2->projpos[i];
-                                    r2 += dx*dx;
+                                    dx = sample_A->projpos[o] - sample_B->projpos[o];
+                                    samples_A_B_dist += dx*dx;
                                 }
                             }
-                            /*------------ Finally select the closest source within the search disk */
-                            if (r2<r2min)
-                            {
-                                r2min = r2;
-                                samp2min = samp2;
+
+                            /* Finally select the closest source within the search disk */
+                            if (samples_A_B_dist < samples_A_B_mindist) {
+                                samples_A_B_mindist = samples_A_B_dist;
+                                B_match = sample_B;
                             }
                         }
-                        if (samp2min)
-                        {
+
+
+                        /* Link samples if there is a match */
+                        if (B_match) {
+
+                            // TODO this part can not go parallel. Use an OpenMP lock here.
                             r2p = r2n = BIG;
-                            if ((prevsamp2=samp1->prevsamp))
-                            {
-                                /*-------------- Check if it is a better match than the previous one */
-                                if (lat!=lng)
-                                {
-                                    dlng = prevsamp2->projpos[lng] - samp1->projpos[lng];
-                                    dlat = prevsamp2->projpos[lat] - samp1->projpos[lat];
-                                    r2p = dlng*dlng + dlat*dlat;
-                                }
-                                else
-                                {
+                            if ((previous_sample=sample_A->prevsamp)) {
+                                /* Check if it is a better match than the previous one */
+
+                                if (lat!=lng) {
+                                    lng_diff = previous_sample->projpos[lng] - sample_A->projpos[lng];
+                                    lat_diff = previous_sample->projpos[lat] - sample_A->projpos[lat];
+                                    r2p = lng_diff*lng_diff + lat_diff*lat_diff;
+                                } else {
                                     r2p = 0.0;
-                                    for (i=0; i<naxis; i++)
-                                    {
-                                        dx = prevsamp2->projpos[i] - samp1->projpos[i];
+                                    for (i=0; i<naxis; i++) {
+                                        dx = previous_sample->projpos[i] - sample_A->projpos[i];
                                         r2p += dx*dx;
                                     }
                                 }
                             }
-                            if ((nextsamp1=samp2min->nextsamp))
-                            {
-                                /*-------------- Check if it is a better match than the previous one */
-                                if (lat!=lng)
-                                {
-                                    dlng = samp2min->projpos[lng] - nextsamp1->projpos[lng];
-                                    dlat = samp2min->projpos[lat] - nextsamp1->projpos[lat];
-                                    r2n = dlng*dlng + dlat*dlat;
-                                }
-                                else
-                                {
+
+                            /* Check if it is a better match than the previous one */
+                            if ((next_sample=B_match->nextsamp)) {
+
+                                if (lat!=lng) {
+                                    lng_diff = B_match->projpos[lng] - next_sample->projpos[lng];
+                                    lat_diff = B_match->projpos[lat] - next_sample->projpos[lat];
+                                    r2n = lng_diff*lng_diff + lat_diff*lat_diff;
+                                } else {
                                     r2n = 0.0;
                                     for (i=0; i<naxis; i++)
                                     {
-                                        dx = samp2min->projpos[i] - nextsamp1->projpos[i];
+                                        dx = B_match->projpos[i] - next_sample->projpos[i];
                                         r2n += dx*dx;
                                     }
                                 }
                             }
-                            if (r2min<r2p && r2min<r2n)
-                                /*------------ unlink from previous match if this is a better match */
-                            {
-                                if (prevsamp2)
-                                    prevsamp2->nextsamp = NULL;
-                                if (nextsamp1)
-                                    nextsamp1->prevsamp = NULL;
-                                samp1->prevsamp = samp2min;
-                                samp2min->nextsamp = samp1;
+
+                            /*------------ unlink from previous match if this is a better match */
+                            if (samples_A_B_mindist<r2p && samples_A_B_mindist<r2n) {
+                                if (previous_sample)
+                                    previous_sample->nextsamp = NULL;
+                                if (next_sample)
+                                    next_sample->prevsamp = NULL;
+                                sample_A->prevsamp = B_match;
+                                B_match->nextsamp = sample_A;
                             }
                         }
                     }
@@ -249,123 +323,97 @@ void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
         }
     }
 
+
     /* Now bring also the reference field samples to the common projection */
     /* Sort samples to accelerate further processing and reset pointers */
-    if (reffield)
-    {
-        set1 = reffield->set[0];
-        sort_samples(set1);
-        unlink_samples(set1);
+    if (reffield) {
+        set_A = reffield->set[0];
+        sort_samples(set_A);
+        unlink_samples(set_A);
 
-        for (f2=0; f2<nfield; f2++)
-        {
-            field2 = field[f2];
-            pset2 = field2->set;
-            set2 = *(pset2++);
-            nset2 = field2->nset;
-            for (s2=nset2; s2--; set2=*(pset2++))
-            {
-                /*---------- Exclude non-overlapping frames */
-                if (lng != lat)
-                {
-                    if (set1->projposmin[lng] > (lngmax2=set2->projposmax[lng]+rlim)
-                     || (lngmin2=set2->projposmin[lng]-rlim) > set1->projposmax[lng]
-                     || set1->projposmin[lat] > (latmax2=set2->projposmax[lat]+rlim)
-                     || (latmin2=set2->projposmin[lat]-rlim)> set1->projposmax[lat])
+        for (k=0; k<fgroup->nfield; k++) {
+            field_B = fgroup->field[k];
+
+            for (l=0; l < field_B->nset; l++) {
+                set_B = fgroup->field[k]->set[l];
+
+                if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
+                    continue;
+
+                /* for each samples from set_A */
+                for (m=0; m <set_A->nsample; m++) {
+                    sample_A = &set_A->sample[m];
+
+                    if (!sample_overlaps_set(sample_A, set_B, rlim, lng, lat))
                         continue;
-                }
-                else
-                    for (i=0; i<naxis; i++)
-                        if (set1->projposmin[i] > (projmax2[i]=set2->projposmax[i]+rlim)
-                                || (projmin2[i]=set2->projposmin[i]-rlim) >set1->projposmax[i])
-                            continue;
-                samp1 = set1->sample;
-                samp2b = set2->sample;
-                nsamp2b = set2->nsample;
-                for (nsamp=set1->nsample; nsamp--; samp1++)
-                {
-                    if (lat!=lng)
-                    {
-                        lng1 = samp1->projpos[lng];
-                        lat1 = samp1->projpos[lat];
+                    /* XXX ??? */
+                    if (lat != lng)
                         yaxis = lat;
-                        /*---------- Jump over sources in the non-overlapping region */
-                        if (lat1<latmin2 || lat1>latmax2 || lng1<lngmin2 || lng1>lngmax2)
-                            continue;
-                    }
                     else
-                    {
-                        proj1 = samp1->projpos;
-                        for (i=0; i<naxis; i++)
-                            if (proj1[i] < projmin2[i] || proj1[i]>projmax2[i])
-                                continue;
-                        lat1 = (naxis<2) ? proj1[yaxis=0] : proj1[yaxis=1];
-                    }
-                    latmin1 = lat1-rlim;
-                    latmax1 = lat1+rlim;
-                    r2min = rlim*rlim;
-                    samp2min = NULL;
-                    samp2 = samp2b;
-                    /*-------- Jump over sources that can't match in y */
-                    for (nsamp2=nsamp2b; nsamp2-- && samp2->projpos[yaxis]<latmin1;
-                            samp2++);
-                    samp2b = samp2;
-                    nsamp2b = ++nsamp2;
-                    for (; nsamp2-- && samp2->projpos[yaxis]<latmax1; samp2++)
-                    {
-                        if (samp2->prevsamp)
+                        yaxis = (naxis < 2) ? 0 : 1;
+
+
+                    sample_A_latmin = sample_A->projpos[lat] - rlim;
+                    sample_A_latmax = sample_A->projpos[lat] + rlim;
+                    samples_A_B_mindist = rlim * rlim;
+                    B_match = NULL;
+
+                    /* for each samples from set_B */
+                    for (n=0; n < set_B->nsample; n++) {
+                        sample_B = &set_B->sample[n];
+
+                        /* We did not reach interesting samples */
+                        if (sample_B->projpos[yaxis] < sample_A_latmin)
                             continue;
-                        if (lat!=lng)
-                        {
-                            dlng = lng1 - samp2->projpos[lng];
-                            dlat = lat1 - samp2->projpos[lat];
-                            r2 = dlng*dlng + dlat*dlat;
-                        }
-                        else
-                        {
-                            r2 = 0.0;
-                            for (i=0; i<naxis; i++)
+
+                        if (sample_B->prevsamp != NULL)
+                            continue;
+
+                        /* Effectively compare objects */
+                        if (lat!=lng) {
+                            lng_diff = sample_A->projpos[lng] - sample_B->projpos[lng];
+                            lat_diff = sample_A->projpos[lat] - sample_B->projpos[lat];
+                            samples_A_B_dist = lng_diff*lng_diff + lat_diff*lat_diff;
+                        } else {
+                            samples_A_B_dist = 0.0;
+                            for (o=0; o<naxis; o++)
                             {
-                                dx = proj1[i] - samp2->projpos[i];
-                                r2 += dx*dx;
+                                dx = sample_A->projpos[o] - sample_B->projpos[o];
+                                samples_A_B_dist += dx*dx;
                             }
                         }
-                        /*---------- Finally select the closest source within the search disk */
-                        if (r2<r2min)
-                        {
-                            r2min = r2;
-                            samp2min = samp2;
+
+                        /* Finally select the closest source within the search disk */
+                        if (samples_A_B_dist < samples_A_B_mindist) {
+                            samples_A_B_mindist = samples_A_B_dist;
+                            B_match = sample_B;
                         }
                     }
-                    if (samp2min)
-                    {
+
+
+
+                    if (B_match) {
                         r2n = BIG;
-                        if ((nextsamp2=samp1->nextsamp))
-                        {
+                        if ((next_sample=sample_A->nextsamp)) {
                             /*------------ Check if it is a better match than the previous one */
-                            if (lat!=lng)
-                            {
-                                dlng = nextsamp2->projpos[lng] - samp1->projpos[lng];
-                                dlat = nextsamp2->projpos[lat] - samp1->projpos[lat];
-                                r2n = dlng*dlng + dlat*dlat;
-                            }
-                            else
-                            {
+                            if (lat!=lng) {
+                                lng_diff = next_sample->projpos[lng] - sample_A->projpos[lng];
+                                lat_diff = next_sample->projpos[lat] - sample_A->projpos[lat];
+                                r2n = lng_diff*lng_diff + lat_diff*lat_diff;
+                            } else {
                                 r2n = 0.0;
-                                for (i=0; i<naxis; i++)
-                                {
-                                    dx = nextsamp2->projpos[i] - samp1->projpos[i];
+                                for (m=0; m<naxis; m++) {
+                                    dx = next_sample->projpos[m] - sample_A->projpos[m];
                                     r2n += dx*dx;
                                 }
                             }
                         }
-                        if (r2min<r2n)
-                            /*---------- unlink from previous match if this is a better match */
-                        {
-                            if (nextsamp2)
-                                nextsamp2->prevsamp = NULL;
-                            samp1->nextsamp = samp2min;
-                            samp2min->prevsamp = samp1;
+                        /*---------- unlink from previous match if this is a better match */
+                        if (samples_A_B_mindist<r2n) {
+                            if (next_sample)
+                                next_sample->prevsamp = NULL;
+                            sample_A->nextsamp = B_match;
+                            B_match->prevsamp = sample_A;
                         }
                     }
                 }
