@@ -46,5 +46,7 @@ scamp_SOURCES	= astrefcat.c astrsolve.c astrstats.c catout.c check.c \
 		  url.h wcscelsys.h xml.h
 scamp_LDADD	= $(srcdir)/fits/libfits.a \
 		  $(srcdir)/wcs/libwcs_c.a
+scamp_LDFLAGS = -fopenmp
+scamp_CFLAGS = -fopenmp
 DATE=`date +"%Y-%m-%d"`
 
