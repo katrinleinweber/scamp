@@ -154,7 +154,29 @@ static bool sample_overlaps_set(
     return true;
 }
 
+static samplestruct*
+get_match_head(samplestruct *sample) {
+    if (sample->prevsamp == NULL)
+        return sample;
+    return get_match_head(sample->prevsamp);
+}
 
+static samplestruct*
+get_match_tail(samplestruct *sample) {
+    if (sample->nextsamp == NULL)
+        return sample;
+    return get_match_tail(sample->nextsamp);
+}
+
+static void
+insert_match(samplestruct *sample_A, samplestruct* B_match) {
+    samplestruct *match_A_head;
+    samplestruct *match_B_tail;
+    match_A_head = get_match_head(sample_A);
+    match_B_tail = get_match_tail(B_match);
+    match_A_head->nextsamp = match_B_tail;
+    match_B_tail->prevsamp = match_A_head;
+}
 /**
  * @fn void crossid_fgroup(fgroupstruct *fgroup, fieldstruct *reffield,
  *                          double tolerance)
@@ -174,7 +196,7 @@ void crossid_fgroup(
 
     fieldstruct	 *field_A, *field_B;
     setstruct    *set_A, *set_B;
-    samplestruct *sample_A, *sample_B,
+    samplestruct *sample_A, *sample_B, *sample_C, *sample_D,
                  *B_match,
                  *previous_sample, *next_sample;
 
@@ -204,6 +226,7 @@ void crossid_fgroup(
         r2n, r2p, yaxis, i, j, k, l, m, n, o)
     for (i=1; i<fgroup->nfield; i++) {
         field_A = fgroup->field[i];
+        fprintf(stdout, "%i hello\n", i);
 
         /* for each other fields */
         for (j=0; j<i; j++) {
@@ -280,52 +303,10 @@ void crossid_fgroup(
 
                         if (B_match) {
 #pragma omp critical
-                            { // openmp critical block
-
-                                r2p = r2n = BIG;
-                                if ((previous_sample=sample_A->prevsamp)) {
-                                    /* Check if it is a better match than the previous one */
-
-                                    if (lat!=lng) {
-                                        lng_diff = previous_sample->projpos[lng] - sample_A->projpos[lng];
-                                        lat_diff = previous_sample->projpos[lat] - sample_A->projpos[lat];
-                                        r2p = lng_diff*lng_diff + lat_diff*lat_diff;
-                                    } else {
-                                        r2p = 0.0;
-                                        for (i=0; i<naxis; i++) {
-                                            dx = previous_sample->projpos[i] - sample_A->projpos[i];
-                                            r2p += dx*dx;
-                                        }
-                                    }
-                                }
-
-                                /* Check if it is a better match than the previous one */
-                                if ((next_sample=B_match->nextsamp)) {
-
-                                    if (lat!=lng) {
-                                        lng_diff = B_match->projpos[lng] - next_sample->projpos[lng];
-                                        lat_diff = B_match->projpos[lat] - next_sample->projpos[lat];
-                                        r2n = lng_diff*lng_diff + lat_diff*lat_diff;
-                                    } else {
-                                        r2n = 0.0;
-                                        for (i=0; i<naxis; i++)
-                                        {
-                                            dx = B_match->projpos[i] - next_sample->projpos[i];
-                                            r2n += dx*dx;
-                                        }
-                                    }
-                                }
-
-                                /*------------ unlink from previous match if this is a better match */
-                                if (samples_A_B_mindist<r2p && samples_A_B_mindist<r2n) {
-                                    if (previous_sample)
-                                        previous_sample->nextsamp = NULL;
-                                    if (next_sample)
-                                        next_sample->prevsamp = NULL;
-                                    sample_A->prevsamp = B_match;
-                                    B_match->nextsamp = sample_A;
-                                }
+                            {
+                                insert_match(sample_A, B_match);
                             }
+
                         }
                     }
                 }
