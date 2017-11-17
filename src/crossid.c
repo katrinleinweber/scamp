@@ -229,10 +229,15 @@ void crossid_fgroup(
         field_A = fgroup->field[i];
         fprintf(stdout, "%i hello\n", i);
 
+        /* TODO maybe malloc a temporary store for all feald_A matches */
+
+        /* TODO or iterate each sample_A to all sample_B from the other
+         * set in one pass */
         /* for each other fields */
         for (j=0; j<i; j++) {
             field_B = fgroup->field[j];
 
+            /* XXX THERE CAN BE ONLY ONE MATCH BETWEEN ONE SAMPLE AND ONE SET */
             /* for each sets from field_A */
             for (k=0; k < field_A->nset; k++) {
                 set_A = field_A->set[k];
@@ -424,7 +429,8 @@ void crossid_fgroup(
         }
     }
 
-    /* remove non worst matches coming from the same set */
+    /* TODO Maybe remove non worst matches coming from the same set */
+    /*
     for (i=0; i<fgroup->nfield; i++) {
         for (j=0; j<fgroup->field[i]->nset; j++) {
             for (k=0; k<fgroup->field[i]->set[j]->nsample; k++) {
@@ -432,6 +438,7 @@ void crossid_fgroup(
             }
         }
     }
+    */
 
     return;
 }
