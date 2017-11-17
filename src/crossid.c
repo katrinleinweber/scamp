@@ -174,6 +174,7 @@ insert_match(samplestruct *sample_A, samplestruct* B_match) {
     samplestruct *match_B_tail;
     match_A_head = get_match_head(sample_A);
     match_B_tail = get_match_tail(B_match);
+
     match_A_head->nextsamp = match_B_tail;
     match_B_tail->prevsamp = match_A_head;
 }
@@ -243,7 +244,13 @@ void crossid_fgroup(
                     if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
                         continue;
 
-                    /* for each samples from set_A */
+                    /*
+                     * for each samples from set_A
+                     *
+                     * NOTE: a sample on A_sets[n] can match a sample_B on
+                     * another A_sets[n+1]. And vice versa.
+                     *
+                     */
                     for (m=0; m <set_A->nsample; m++) {
                         sample_A = &set_A->sample[m];
 
@@ -300,7 +307,6 @@ void crossid_fgroup(
 
 
                         /* Link samples if there is a match */
-
                         if (B_match) {
 #pragma omp critical
                             {
@@ -313,7 +319,6 @@ void crossid_fgroup(
             }
         }
     }
-
 
     /* Now bring also the reference field samples to the common projection */
     /* Sort samples to accelerate further processing and reset pointers */
@@ -415,6 +420,15 @@ void crossid_fgroup(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /* remove non worst matches coming from the same set */
+    for (i=0; i<fgroup->nfield; i++) {
+        for (j=0; j<fgroup->field[i]->nset; j++) {
+            for (k=0; k<fgroup->field[i]->set[j]->nsample; k++) {
+                filter_sample_matches(&fgroup->field[i]->set[j]->sample[k]);
             }
         }
     }
