@@ -190,8 +190,9 @@ insert_match(samplestruct *sample_A, samplestruct* B_match,
 
     while (iter != NULL) {
         if (iter->set->field == B_field) {
-            B_oldMatch = iter;
-            break;
+            return;
+            //B_oldMatch = iter;
+            //break;
         }
         iter = iter->nextsamp;
     }
@@ -227,8 +228,10 @@ insert_match(samplestruct *sample_A, samplestruct* B_match,
         }
 
         /* Remove the match from the linked list */
-        relink->prevsamp->nextsamp = relink->nextsamp;
-        relink->nextsamp->prevsamp = relink->prevsamp;
+        if (relink->prevsamp)
+            relink->prevsamp->nextsamp = relink->nextsamp;
+        if (relink->nextsamp)
+            relink->nextsamp->prevsamp = relink->prevsamp;
         relink->nextsamp = relink->prevsamp = NULL;
 
     }
@@ -276,15 +279,13 @@ void crossid_fgroup(
 
     /* Now start the cross-id loop */
     /* for each fields */
-#pragma omp parallel for shared(fgroup, naxis, lng, lat, rlim), private(\
+//#pragma omp parallel for shared(fgroup, naxis, lng, lat, rlim), private(\
         field_A, field_B, set_A, set_B, sample_A, sample_B, B_match, \
         previous_sample, next_sample, sample_A_latmin, sample_A_latmax, \
         samples_A_B_dist, samples_A_B_mindist, lng_diff, lat_diff, dx, \
         r2n, r2p, yaxis, i, j, k, l, m, n, o)
     for (i=1; i<fgroup->nfield; i++) {
         field_A = fgroup->field[i];
-        fprintf(stdout, "%i hello\n", i);
-
         /* TODO maybe malloc a temporary store for all feald_A matches */
 
         /* TODO or iterate each sample_A to all sample_B from the other
@@ -368,9 +369,9 @@ void crossid_fgroup(
 
                         /* Link samples if there is a match */
                         if (B_match) {
-#pragma omp critical
+//#pragma omp critical
                             {
-                                insert_match(sample_A, B_match, lng, lat, samples_A_B_dist, naxis);
+                                insert_match(sample_A, B_match, lng, lat, samples_A_B_mindist, naxis);
                             }
                         }
                     }
@@ -386,7 +387,7 @@ void crossid_fgroup(
         sort_samples(set_A);
         unlink_samples(set_A);
 
-#pragma omp parallel for shared(fgroup, naxis, lng, lat, rlim, set_A), private(\
+//#pragma omp parallel for shared(fgroup, naxis, lng, lat, rlim, set_A), private(\
         field_A, field_B, set_B, sample_A, sample_B, B_match, \
         previous_sample, next_sample, sample_A_latmin, sample_A_latmax, \
         samples_A_B_dist, samples_A_B_mindist, lng_diff, lat_diff, dx, \
@@ -452,47 +453,15 @@ void crossid_fgroup(
 
 
                     if (B_match) {
-#pragma omp critical
+//#pragma omp critical
                         { // openmp critical block
-                            r2n = BIG;
-                            if ((next_sample=sample_A->nextsamp)) {
-                                /*------------ Check if it is a better match than the previous one */
-                                if (lat!=lng) {
-                                    lng_diff = next_sample->projpos[lng] - sample_A->projpos[lng];
-                                    lat_diff = next_sample->projpos[lat] - sample_A->projpos[lat];
-                                    r2n = lng_diff*lng_diff + lat_diff*lat_diff;
-                                } else {
-                                    r2n = 0.0;
-                                    for (m=0; m<naxis; m++) {
-                                        dx = next_sample->projpos[m] - sample_A->projpos[m];
-                                        r2n += dx*dx;
-                                    }
-                                }
-                            }
-                            /*---------- unlink from previous match if this is a better match */
-                            if (samples_A_B_mindist<r2n) {
-                                if (next_sample)
-                                    next_sample->prevsamp = NULL;
-                                sample_A->nextsamp = B_match;
-                                B_match->prevsamp = sample_A;
-                            }
+                            insert_match(sample_A, B_match, lng, lat, samples_A_B_mindist, naxis);
                         }
                     }
                 }
             }
         }
     }
-
-    /* TODO Maybe remove non worst matches coming from the same set */
-    /*
-    for (i=0; i<fgroup->nfield; i++) {
-        for (j=0; j<fgroup->field[i]->nset; j++) {
-            for (k=0; k<fgroup->field[i]->set[j]->nsample; k++) {
-                filter_sample_matches(&fgroup->field[i]->set[j]->sample[k]);
-            }
-        }
-    }
-    */
 
     return;
 }
