@@ -169,79 +169,14 @@ get_match_tail(samplestruct *sample) {
 }
 
 static void
-insert_match(samplestruct *sample_A, samplestruct* B_match,
-        int lng, int lat, double samples_A_B_dist, int naxis) {
-    samplestruct *match_A_head;
-    samplestruct *match_B_tail;
-    match_A_head = get_match_head(sample_A);
-    match_B_tail = get_match_tail(B_match);
+insert_match(samplestruct *sample_A, samplestruct* B_match) {
+    samplestruct *match_A_tail = get_match_tail(sample_A);
+    samplestruct *match_B_head = get_match_head(B_match);
 
-    match_A_head->nextsamp = match_B_tail;
-    match_B_tail->prevsamp = match_A_head;
+    match_B_head->prevsamp = match_A_tail;
+    match_A_tail->nextsamp = match_B_head;
 
-    // fprintf(stdout, "have a linked object\n");
 
-    /*
-     * Now find another match from field_B (which will be on another set_B
-     * and keep the closest to A_sample. Stop when finding One (that is not _B
-     * , because there can be only two of the same field_B after the insert_match
-     * over this.
-     */
-    samplestruct *iter = match_A_head; // our group of samples
-    samplestruct *B_oldMatch = NULL; // the old match if there is one
-    fieldstruct  *B_field = B_match->set->field; // the field we search for
-
-    while (iter != NULL) {
-        if (iter->set->field == B_field && iter != B_match) {
-            B_oldMatch = iter;
-            break;
-        }
-        iter = iter->nextsamp;
-    }
-
-    if (B_oldMatch != NULL) {
-        // fprintf(stdout, "oldmatch is %p\n", (void*) B_oldMatch);
-        /* have found a match!!! */
-
-        double lng_diff, lat_diff;
-        double old_A_B_dist, dx;
-        int m;
-
-        /* get the distance of B_oldMatch from A_sample */
-        if (lat!=lng) {
-            lng_diff = B_oldMatch->projpos[lng] - sample_A->projpos[lng];
-            lat_diff = B_oldMatch->projpos[lat] - sample_A->projpos[lat];
-            old_A_B_dist = lng_diff*lng_diff + lat_diff*lat_diff;
-        } else {
-            old_A_B_dist = 0.0;
-            for (m=0; m<naxis; m++) {
-                dx = B_oldMatch->projpos[m] - sample_A->projpos[m];
-                old_A_B_dist += dx*dx;
-            }
-        }
-
-        // fprintf(stdout, "%f %f \n", old_A_B_dist, samples_A_B_dist);
-        samplestruct *relink;
-        if (old_A_B_dist > samples_A_B_dist) {
-            // fprintf(stdout, "remove oldmatch\n");
-            /* The new is closest than the old */
-            relink = B_oldMatch;
-
-        } else {
-            // fprintf(stdout, "remove newmatch\n");
-            /* The old is closest than the new */
-
-            relink = B_match;
-        }
-
-        /* Remove the match from the linked list */
-        if (relink->prevsamp)
-            relink->prevsamp->nextsamp = relink->nextsamp;
-        if (relink->nextsamp)
-            relink->nextsamp->prevsamp = relink->prevsamp;
-        relink->nextsamp = relink->prevsamp = NULL;
-
-    }
 }
 
 /**
@@ -293,36 +228,25 @@ void crossid_fgroup(
         r2n, r2p, yaxis, i, j, k, l, m, n, o)
     for (i=1; i<fgroup->nfield; i++) {
         field_A = fgroup->field[i];
-        /* TODO maybe malloc a temporary store for all feald_A matches */
 
-        /* TODO or iterate each sample_A to all sample_B from the other
-         * set in one pass */
-        /* for each other fields */
-        for (j=0; j<i; j++) {
-            field_B = fgroup->field[j];
+        int lkj = 0;
+        for (j=0; j < field_A->nset; j++) {
+            set_A = field_A->set[j];
 
-            /* XXX THERE CAN BE ONLY ONE MATCH BETWEEN ONE SAMPLE AND ONE SET */
-            /* for each sets from field_A */
-            for (k=0; k < field_A->nset; k++) {
-                set_A = field_A->set[k];
+            for (k=0; k < set_A->nsample; k++) {
+                sample_A = &set_A->sample[k];
 
-                /* for each sets from field_B */
-                for (l=0; l < field_B->nset; l++) {
-                    set_B = field_B->set[l];
+                B_match = NULL;
+                samples_A_B_mindist = rlim * rlim;
 
-                    if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
-                        continue;
+                for (l=0; l<i; l++) {
+                    field_B = fgroup->field[l];
 
-                    /*
-                     * for each samples from set_A
-                     *
-                     * NOTE: a sample on A_sets[n] can match a sample_B on
-                     * another A_sets[n+1]. And vice versa.
-                     *
-                     */
-                    for (m=0; m <set_A->nsample; m++) {
-                        sample_A = &set_A->sample[m];
 
+                    for (m=0; m<field_B->nset; m++) {
+                        set_B = field_B->set[m];
+                        if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
+                            continue;
                         if (!sample_overlaps_set(sample_A, set_B, rlim, lng, lat))
                             continue;
 
@@ -334,11 +258,9 @@ void crossid_fgroup(
 
                         sample_A_latmin = sample_A->projpos[lat] - rlim;
                         sample_A_latmax = sample_A->projpos[lat] + rlim;
-                        samples_A_B_mindist = rlim * rlim;
-                        B_match = NULL;
 
-                        /* for each samples from set_B */
-                        for (n=0; n < set_B->nsample; n++) {
+                        for (n=0; n<set_B->nsample; n++) {
+                            lkj ++;
                             sample_B = &set_B->sample[n];
 
                             /* We did not reach interesting samples */
@@ -372,19 +294,23 @@ void crossid_fgroup(
                                 samples_A_B_mindist = samples_A_B_dist;
                                 B_match = sample_B;
                             }
-                        }
 
-                        /* Link samples if there is a match */
-                        if (B_match) {
+                        } // end for sample_B
+
+                    } // end for set_B
+
+                } // end for field_B
+                if (B_match) {
 //#pragma omp critical
-                            {
-                                insert_match(sample_A, B_match, lng, lat, samples_A_B_mindist, naxis);
-                            }
-                        }
+                    {
+                        insert_match(sample_A, B_match);
                     }
                 }
+
             }
         }
+
+        fprintf(stdout, "qqpqp %i\n", lkj);
     }
 
     /* Now bring also the reference field samples to the common projection */
@@ -399,18 +325,19 @@ void crossid_fgroup(
         previous_sample, next_sample, sample_A_latmin, sample_A_latmax, \
         samples_A_B_dist, samples_A_B_mindist, lng_diff, lat_diff, dx, \
         r2n, r2p, yaxis, i, j, k, l, m, n, o)
-        for (k=0; k<fgroup->nfield; k++) {
-            field_B = fgroup->field[k];
+        for (j=0; j<set_A->nsample; j++) {
+            sample_A = &set_A->sample[j];
+            B_match = NULL;
+            samples_A_B_mindist = rlim * rlim;
 
-            for (l=0; l < field_B->nset; l++) {
-                set_B = fgroup->field[k]->set[l];
+            for (k=0; k<fgroup->nfield; k++) {
+                field_B = fgroup->field[k];
 
-                if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
-                    continue;
+                for (l=0; l < field_B->nset; l++) {
+                    set_B = fgroup->field[k]->set[l];
 
-                /* for each samples from set_A */
-                for (m=0; m <set_A->nsample; m++) {
-                    sample_A = &set_A->sample[m];
+                    if (!overlapping_sets(set_A, set_B, rlim, lng, lat))
+                        continue;
 
                     if (!sample_overlaps_set(sample_A, set_B, rlim, lng, lat))
                         continue;
@@ -423,8 +350,6 @@ void crossid_fgroup(
 
                     sample_A_latmin = sample_A->projpos[lat] - rlim;
                     sample_A_latmax = sample_A->projpos[lat] + rlim;
-                    samples_A_B_mindist = rlim * rlim;
-                    B_match = NULL;
 
                     /* for each samples from set_B */
                     for (n=0; n < set_B->nsample; n++) {
@@ -459,13 +384,14 @@ void crossid_fgroup(
                     }
 
 
-                    if (B_match) {
-//#pragma omp critical
-                        { // openmp critical block
-                            insert_match(sample_A, B_match, lng, lat, samples_A_B_mindist, naxis);
-                        }
-                    }
+
                 }
+            }
+        }
+        if (B_match) {
+//#pragma omp critical
+            { // openmp critical block
+                insert_match(sample_A, B_match);
             }
         }
     }
