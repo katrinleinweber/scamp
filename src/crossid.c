@@ -179,51 +179,58 @@ insert_match(samplestruct *sample_A, samplestruct* B_match,
     match_A_head->nextsamp = match_B_tail;
     match_B_tail->prevsamp = match_A_head;
 
+    // fprintf(stdout, "have a linked object\n");
+
     /*
      * Now find another match from field_B (which will be on another set_B
-     * and keep the closest to A_sample. Stop when finding One, because there
-     * can be only two of the same field_B after the insert_match over this.
+     * and keep the closest to A_sample. Stop when finding One (that is not _B
+     * , because there can be only two of the same field_B after the insert_match
+     * over this.
      */
     samplestruct *iter = match_A_head; // our group of samples
     samplestruct *B_oldMatch = NULL; // the old match if there is one
     fieldstruct  *B_field = B_match->set->field; // the field we search for
 
     while (iter != NULL) {
-        if (iter->set->field == B_field) {
-            return;
-            //B_oldMatch = iter;
-            //break;
+        if (iter->set->field == B_field && iter != B_match) {
+            B_oldMatch = iter;
+            break;
         }
         iter = iter->nextsamp;
     }
 
     if (B_oldMatch != NULL) {
+        // fprintf(stdout, "oldmatch is %p\n", (void*) B_oldMatch);
         /* have found a match!!! */
 
         double lng_diff, lat_diff;
-        double r2n, dx;
+        double old_A_B_dist, dx;
         int m;
 
         /* get the distance of B_oldMatch from A_sample */
         if (lat!=lng) {
             lng_diff = B_oldMatch->projpos[lng] - sample_A->projpos[lng];
             lat_diff = B_oldMatch->projpos[lat] - sample_A->projpos[lat];
-            r2n = lng_diff*lng_diff + lat_diff*lat_diff;
+            old_A_B_dist = lng_diff*lng_diff + lat_diff*lat_diff;
         } else {
-            r2n = 0.0;
+            old_A_B_dist = 0.0;
             for (m=0; m<naxis; m++) {
                 dx = B_oldMatch->projpos[m] - sample_A->projpos[m];
-                r2n += dx*dx;
+                old_A_B_dist += dx*dx;
             }
         }
 
+        // fprintf(stdout, "%f %f \n", old_A_B_dist, samples_A_B_dist);
         samplestruct *relink;
-        if (r2n > samples_A_B_dist) {
+        if (old_A_B_dist > samples_A_B_dist) {
+            // fprintf(stdout, "remove oldmatch\n");
             /* The new is closest than the old */
             relink = B_oldMatch;
 
         } else {
+            // fprintf(stdout, "remove newmatch\n");
             /* The old is closest than the new */
+
             relink = B_match;
         }
 
