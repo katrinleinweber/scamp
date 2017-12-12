@@ -246,11 +246,22 @@ void	makeit(void)
     {
 /*-- Reproject all fields from a group to a common projection */
     reproj_fgroup(fgroups[g], reffields[g], 0);
+    }
+    clock_t start, end;
+    start = clock();
+
+  for (g=0; g<ngroup; g++) {
 /*-- Perform cross-identifications across catalogs */
     sprintf(str, "Making preliminary cross-identifications in group %d", g+1);
     NFPRINTF(OUTPUT, str);
     crossid_fgroup(fgroups[g], reffields[g], prefs.crossid_radius*ARCSEC/DEG);
     }
+  end = clock();
+  double cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+
+  fprintf(stdout, "LLLLLLLLLLLLLL crossmatch done in %lf cpu_time seconds\n", cpu_time_used);
+  exit(0);
+
 
 
   if (prefs.solvastrom_flag)
